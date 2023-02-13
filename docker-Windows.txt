@@ -1,0 +1,40 @@
+# Use the latest Windows Server Core image as the base image
+FROM mcr.microsoft.com/windows/servercore:latest
+
+# Install GitBash
+RUN powershell -Command \
+    Invoke-WebRequest -Uri https://github.com/git-for-windows/git/releases/download/v2.30.2.windows.2/Git-2.30.2.2-64-bit.exe -OutFile Git.exe ; \
+    Start-Process Git.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /DIR="C:\Program Files\Git"' -Wait ; \
+    Remove-Item Git.exe
+
+# Install NodeJS v14
+RUN powershell -Command \
+    Invoke-WebRequest -Uri https://nodejs.org/dist/v14.16.2/node-v14.16.2-x64.msi -OutFile nodejs.msi ; \
+    Start-Process nodejs.msi -ArgumentList '/quiet' -Wait ; \
+    Remove-Item nodejs.msi
+
+# Install npm
+RUN setx /M PATH "%PATH%;%ProgramFiles%\nodejs"
+
+# Install Python v3.1
+RUN powershell -Command \
+    Invoke-WebRequest -Uri https://www.python.org/ftp/python/3.1.0/python-3.1.0.msi -OutFile python.msi ; \
+    Start-Process python.msi -ArgumentList '/quiet' -Wait ; \
+    Remove-Item python.msi
+
+# Install PowerShell DSC
+RUN powershell -Command \
+    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force ; \
+    Install-Module -Name PowerShellGet -Force ; \
+    Install-Module -Name xPSDesiredStateConfiguration -Force
+
+# Install Px
+RUN powershell -Command \
+    Invoke-WebRequest -Uri https://github.com/genevera/px/releases/download/v0.17.0/px_0.17.0_windows_amd64.zip -OutFile px.zip ; \
+    Expand-Archive px.zip -DestinationPath 'C:\Program Files\Px' ; \
+    Remove-Item px.zip
+
+# Install Remote Tools for Visual Studio 2019
+RUN powershell -Command \
+    Invoke-WebRequest -Uri https://download.visualstudio.microsoft.com/download/pr/b0f38ba2-c847-4d20-9a3b-ec3d1208ee71/a70ccc6219e0a07b071d96d06e738c9a/RemoteTools.MSI -OutFile RemoteTools.msi ; \
+    Start-Process RemoteTools.msi -ArgumentList '/quiet' -Wait ; \
