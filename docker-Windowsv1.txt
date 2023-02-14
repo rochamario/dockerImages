@@ -1,0 +1,120 @@
+# escape=`
+
+ARG REPO=mcr.microsoft.com/dotnet/framework/runtime
+FROM $REPO:4.8-20221213-windowsservercore-ltsc2019
+
+ENV `
+    # Do not generate certificate
+    DOTNET_GENERATE_ASPNET_CERTIFICATE=false `
+    # NuGet version to install
+    NUGET_VERSION=6.4.0 `
+    # Install location of Roslyn
+    ROSLYN_COMPILER_LOCATION="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\Roslyn"
+
+# Install GitBash
+RUN powershell -Command `
+    Invoke-WebRequest -Uri https://github.com/git-for-windows/git/releases/download/v2.39.1.windows.1/Git-2.39.1-32-bit.exe -OutFile Git.exe ; `
+    Start-Process Git.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /DIR="C:\Program Files\Git"' -Wait ; `
+    Remove-Item Git.exe
+
+# Install NodeJS v14
+RUN powershell -Command  `
+    Invoke-WebRequest -Uri https://nodejs.org/download/release/v14.16.1/node-v14.16.1-x64.msi -OutFile nodejs.msi ; `
+    Start-Process nodejs.msi -ArgumentList '/quiet' -Wait ; `
+    Remove-Item nodejs.msi
+
+# Install Python v3.1
+RUN powershell -Command  ` 
+    Invoke-WebRequest -Uri https://www.python.org/ftp/python/3.1/python-3.1.msi -OutFile python.msi ; `
+    Start-Process python.msi -ArgumentList '/quiet' -Wait ;  `
+    Remove-Item python.msi
+
+# Install PowerShell DSC
+RUN powershell -Command ` 
+    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force ; `
+    Install-Module -Name PowerShellGet -Force ; `
+    Install-Module -Name xPSDesiredStateConfiguration -Force
+
+# Install Px
+RUN powershell -Command `
+    Invoke-WebRequest -Uri https://github.com/genotrance/px/releases/download/v0.8.4/px-v0.8.4-windows.zip -OutFile px.zip ; `
+    Expand-Archive px.zip -DestinationPath 'C:\Program Files\Px' ; `
+    Remove-Item px.zip
+
+# Install Remote Tools for Visual Studio 2019
+RUN powershell -Command  `
+    Invoke-WebRequest -Uri https://download.visualstudio.microsoft.com/download/pr/7d2ba635-6158-4675-a78b-9105037fff29/fc888502b7d1f3dd8bae38e62b7492411adf9ef012f031b97ba33217b936ab0e/VS_RemoteTools.exe -OutFile RemoteTools.msi ; `
+    Start-Process RemoteTools.msi -ArgumentList '/quiet' -Wait ;
+
+
+# Install NuGet CLI
+RUN mkdir "%ProgramFiles%\NuGet\latest" `
+    && curl -fSLo "%ProgramFiles%\NuGet\nuget.exe" https://dist.nuget.org/win-x86-commandline/v%NUGET_VERSION%/nuget.exe `
+    && mklink "%ProgramFiles%\NuGet\latest\nuget.exe" "%ProgramFiles%\NuGet\nuget.exe"
+
+# Install VS components
+RUN `
+    # Install VS Test Agent
+    curl -fSLo vs_TestAgent.exe https://aka.ms/vs/17/release/vs_TestAgent.exe `
+    && start /w vs_TestAgent --quiet --norestart --nocache --wait --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\TestAgent" `
+    && powershell -Command "if ($err = dir $Env:TEMP -Filter dd_setup_*_errors.log | where Length -gt 0 | Get-Content) { throw $err }" `
+    && del vs_TestAgent.exe `
+    `
+    # Install VS Build Tools
+    && curl -fSLo vs_BuildTools.exe https://aka.ms/vs/17/release/vs_BuildTools.exe `
+    && start /w vs_BuildTools ^ `
+        --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools" ^ `
+        --add Microsoft.Component.ClickOnce.MSBuild ^ `
+        --add Microsoft.Net.Component.4.8.SDK ^ `
+        --add Microsoft.NetCore.Component.Runtime.6.0 ^ `
+        --add Microsoft.NetCore.Component.Runtime.7.0 ^ `
+        --add Microsoft.NetCore.Component.SDK ^ `
+        --add Microsoft.VisualStudio.Component.NuGet.BuildTools ^ `
+        --add Microsoft.VisualStudio.Component.WebDeploy ^ `
+        --add Microsoft.VisualStudio.Web.BuildTools.ComponentGroup ^ `
+        --add Microsoft.VisualStudio.Workload.MSBuildTools ^ `
+        --quiet --norestart --nocache --wait `
+    && powershell -Command "if ($err = dir $Env:TEMP -Filter dd_setup_*_errors.log | where Length -gt 0 | Get-Content) { throw $err }" `
+    && del vs_BuildTools.exe `
+    `
+    # Trigger dotnet first run experience by running arbitrary cmd
+    && "%ProgramFiles%\dotnet\dotnet" help `
+    `
+    # Workaround for issues with 64-bit ngen
+    && %windir%\Microsoft.NET\Framework64\v4.0.30319\ngen uninstall "%ProgramFiles(x86)%\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\SecAnnotate.exe" `
+    && %windir%\Microsoft.NET\Framework64\v4.0.30319\ngen uninstall "%ProgramFiles(x86)%\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\WinMDExp.exe" `
+    `
+    # ngen assemblies queued by VS installers
+    && %windir%\Microsoft.NET\Framework64\v4.0.30319\ngen update `
+    && %windir%\Microsoft.NET\Framework\v4.0.30319\ngen update `
+    `
+    # Cleanup
+    && (for /D %i in ("%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\*") do rmdir /S /Q "%i") `
+    && (for %i in ("%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\*") do if not "%~nxi" == "vswhere.exe" del "%~i") `
+    && powershell Remove-Item -Force -Recurse "%TEMP%\*" `
+    && rmdir /S /Q "%ProgramData%\Package Cache"
+
+# Set PATH in one layer to keep image size down.
+RUN powershell setx /M PATH $(${Env:PATH} `
+    + \";${Env:ProgramFiles}\NuGet\" `
+    + \";${Env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\TestAgent\Common7\IDE\CommonExtensions\Microsoft\TestWindow\" `
+    + \";${Env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\amd64\" `
+    + \";${Env:ProgramFiles(x86)}\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools\" `
+    + \";${Env:ProgramFiles(x86)}\Microsoft SDKs\ClickOnce\SignTool\")
+
+# Install Targeting Packs
+RUN powershell " `
+    $ErrorActionPreference = 'Stop'; `
+    $ProgressPreference = 'SilentlyContinue'; `
+    @('4.0', '4.5.2', '4.6.2', '4.7.2', '4.8', '4.8.1') `
+    | %{ `
+        Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri https://dotnetbinaries.blob.core.windows.net/referenceassemblies/v${_}.zip `
+            -OutFile referenceassemblies.zip; `
+        Expand-Archive referenceassemblies.zip -DestinationPath \"${Env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\"; `
+        Remove-Item -Force referenceassemblies.zip; `
+    }"
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
